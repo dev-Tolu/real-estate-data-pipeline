@@ -145,78 +145,89 @@ class RealEstateScraper:
     #   Features: <li> bullets containing "Bedroom", "Bathroom" etc.
     # ------------------------------------------------------------------
 
-    def _parse_nigeriapropertycentre(self, html: str, source_url: str):
-        soup = BeautifulSoup(html, "html.parser")
+    def _parse_nigeriapropertycentre(self, html: str, source_url: str) -> List[Dict]:
+        soup = BeautifulSoup(html, 'html.parser')
         listings = []
 
-        cards = soup.find_all("h4")
+        # Primary selector — verified from live page
+        cards = soup.select('div.listings-property, li.listings-property')
 
-        logger.info(f"Found {len(cards)} h4 listing blocks")
+        if not cards:
+            # Fallback: find parent divs of any ₦ price element
+            price_tags = soup.find_all(string=lambda t: t and '₦' in t)
+            seen = set()
+            cards = []
+            for tag in price_tags:
+                parent = tag.find_parent('div')
+                if parent and id(parent) not in seen:
+                    cards.append(parent)
+                    seen.add(id(parent))
 
-        for h in cards:
+        logger.debug(f"Found {len(cards)} raw cards on page")
+
+        for card in cards:
             try:
-                link = h.find("a")
-                if not link:
-                    continue
+                # Title + link
+                title_el = card.select_one('h3 a, h4 a, .listings-property-title a') \
+                           or card.select_one('h3, h4, .listings-property-title')
+                link_el  = card.select_one('a[href]')
 
-                title = link.get_text(strip=True)
-                href = link.get("href")
+                # Price — find element containing ₦
+                price_el = card.select_one('[class*="price"]')
+                if not price_el:
+                    price_el = next(
+                        (tag for tag in card.find_all(string=lambda t: t and '₦' in t)),
+                        None
+                    )
 
-                listing_url = (
-                    href if href.startswith("http")
-                    else f"https://nigeriapropertycentre.com{href}"
+                # Location
+                location_el = card.select_one('address, [class*="location"], [class*="address"]')
+
+                # Feature bullets
+                bedrooms  = self._extract_feature(card, 'Bedroom')
+                bathrooms = self._extract_feature(card, 'Bathroom')
+
+                # Infer property type from title text
+                title_text = self._text(title_el) or ''
+                property_type = self._infer_type(title_text)
+
+                # Build absolute listing URL
+                listing_url = None
+                if link_el:
+                    href = link_el.get('href', '')
+                    listing_url = (
+                        href if href.startswith('http')
+                        else f"https://nigeriapropertycentre.com{href}"
+                    )
+
+                price_text = (
+                    self._text(price_el)
+                    if hasattr(price_el, 'get_text')
+                    else str(price_el or '')
                 )
 
-                # Look for price in nearby elements (siblings)
-                price = None
-                node = h
-
-                for _ in range(10):  # walk forward safely
-                    node = node.next_sibling
-                    if not node:
-                        break
-
-                    text = str(node)
-                    if "₦" in text:
-                        price = text.strip()
-                        break
-
-                # Extract features (bedrooms, bathrooms)
-                bedrooms = None
-                bathrooms = None
-
-                parent_text = h.parent.get_text(" ", strip=True).lower()
-
-                import re
-                bed_match = re.search(r"(\d+)\s*bed", parent_text)
-                bath_match = re.search(r"(\d+)\s*bath", parent_text)
-
-                if bed_match:
-                    bedrooms = int(bed_match.group(1))
-                if bath_match:
-                    bathrooms = int(bath_match.group(1))
-
                 listing = {
-                    "source_url": source_url,
-                    "listing_url": listing_url,
-                    "title": title,
-                    "price": self._parse_price(price),
-                    "location": None,
-                    "address": None,
-                    "bedrooms": bedrooms,
-                    "bathrooms": bathrooms,
-                    "sqft": None,
-                    "property_type": self._infer_type(title),
-                    "listing_date": datetime.now().isoformat(),
-                    "scraped_at": datetime.now().isoformat(),
+                    'source_url': source_url,
+                    'listing_url': listing_url,
+                    'title': title_text,
+                    'price': self._parse_price(price_text),
+                    'location': self._text(location_el),
+                    'address': self._text(location_el),
+                    'bedrooms': bedrooms,
+                    'bathrooms': bathrooms,
+                    'sqft': None,  # not shown on listing cards
+                    'property_type': property_type,
+                    'listing_date': datetime.now().isoformat(),
+                    'scraped_at': datetime.now().isoformat(),
                 }
 
-                listings.append(listing)
+                # Only keep cards that have at least a title and a price
+                if listing['title'] and listing['price']:
+                    listings.append(listing)
 
             except Exception as e:
-                logger.warning(f"Error parsing listing: {e}")
+                logger.warning(f"Failed to parse card: {e}")
 
-        logger.info(f"Parsed {len(listings)} listings")
         return listings
 
     # ------------------------------------------------------------------
