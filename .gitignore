@@ -1,0 +1,49 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+postgres_data/
+minio-data/
+grafana-data/
+spark-data/
+redis-data/
+airflow-db-data/
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+__pycache__/
+*.pyc
+
+# Python
+venv/
+env/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data files
+*.parquet
+*.csv
+*.json
+data/
+
+# Secrets
+secrets/
+*.key
+*.pem
