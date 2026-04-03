@@ -169,8 +169,6 @@ class RealEstateScraper:
         """UPDATED parser for propertypro.ng based on actual HTML"""
         soup = BeautifulSoup(html, 'html.parser')
         listings = []
-        
-        # PropertyPro uses property-listing or property-listing-grid containers
         cards = soup.select('div.property-listing, div.property-listing-grid')
         
         logger.info(f"Found {len(cards)} listing cards on PropertyPro")
@@ -230,6 +228,10 @@ class RealEstateScraper:
                         property_type = 'land'
                     elif '/commercial-property/' in listing_url:
                         property_type = 'commercial'
+
+                # Extract description and features
+                description = self._get_description_text(card, 'propertypro')
+                features = self._extract_features_from_description(description)
                 
                 listing = {
                     'source_url': source_url,
@@ -242,9 +244,21 @@ class RealEstateScraper:
                     'bathrooms': baths,
                     'sqft': None,
                     'property_type': property_type,
+                    'description': description,
+                    'features': features,
                     'listing_date': datetime.now().isoformat(),
                     'scraped_at': datetime.now().isoformat(),
                 }
+
+                # Optional: Add individual feature fields for easier querying
+                if features.get('swimming_pool'):
+                    listing['has_pool'] = True
+                if features.get('backup_power'):
+                    listing['has_backup_power'] = True
+                if features.get('parking_spaces'):
+                    listing['parking_spaces'] = features['parking_spaces']
+                
+                listings.append(listing)
                 
                 if listing['title'] or listing['price']:
                     listings.append(listing)
@@ -258,40 +272,67 @@ class RealEstateScraper:
         return listings
 
     def _parse_nigeriapropertycentre(self, html: str, source_url: str) -> List[Dict]:
-        """UPDATED parser for nigeriapropertycentre.com based on actual HTML"""
+        """UPDATED parser for nigeriapropertycentre.com"""
         soup = BeautifulSoup(html, 'html.parser')
         listings = []
         
-        # The actual listing containers - based on HTML structure
         cards = soup.select('div.row.property-list, div.wp-block.property.list')
         
         logger.info(f"Found {len(cards)} listing cards on NigeriaPropertyCentre")
         
         for card in cards:
             try:
-                # Extract title from h3 or h4
                 title_el = card.select_one('h3, h4, .content-title, [itemprop="name"]')
                 
-                # Extract price - looking for span with class "price"
-                price_el = card.select_one('span.price, [class*="price"]')
-                price_text = self._text(price_el)
+                price_el = None
+                price_selectors = [
+                    'span.price',
+                    '[class*="price"]',
+                    '.similar-listings-price h4',
+                    '.pl-price h3',
+                    'h4 span[content]'
+                ]
                 
-                # Clean price
+                for selector in price_selectors:
+                    price_el = card.select_one(selector)
+                    if price_el:
+                        break
+                
+                price_text = self._text(price_el) if price_el else None
+                
+                # Clean price - handle empty or invalid values
                 clean_price = None
-                if price_text:
+                if price_text and price_text != '₦':
                     import re
-                    price_match = re.search(r'([\d,]+(?:\.\d+)?)', price_text.replace('₦', '').replace('$', ''))
-                    if price_match:
-                        clean_price = float(price_match.group(1).replace(',', ''))
+                    # Remove currency symbols and extract numbers
+                    price_clean = re.sub(r'[^\d.,]', '', price_text)
+                    if price_clean:
+                        # Handle both comma and dot decimal separators
+                        price_clean = price_clean.replace(',', '')
+                        try:
+                            clean_price = float(price_clean)
+                        except ValueError:
+                            clean_price = None
                 
-                # Location is in address tag
+                # If price is still None, try to find it in the text content
+                if not clean_price:
+                    # Look for price in card text
+                    card_text = card.get_text()
+                    ngn_match = re.search(r'₦\s*([\d,]+)', card_text)
+                    if ngn_match:
+                        clean_price = float(ngn_match.group(1).replace(',', ''))
+                    else:
+                    # Look for any large number that might be a price
+                        number_match = re.search(r'([\d,]{6,})', card_text)
+                    if number_match:
+                        clean_price = float(number_match.group(1).replace(',', ''))
+                
                 location_el = card.select_one('address, [class*="location"], [class*="address"]')
                 
-                # Extract bedrooms and bathrooms from aux-info
+                # Extract bedrooms and bathrooms
                 beds = None
                 baths = None
                 
-                # Look for bed icon
                 beds_li = card.select_one('li i.fa-bed, li i.fal.fa-bed')
                 if beds_li:
                     beds_li_parent = beds_li.find_parent('li')
@@ -301,7 +342,6 @@ class RealEstateScraper:
                             beds_text = beds_span.get_text(strip=True)
                             beds = self._parse_int(beds_text)
                 
-                # Look for bath icon
                 baths_li = card.select_one('li i.fa-bath, li i.fal.fa-bath')
                 if baths_li:
                     baths_li_parent = baths_li.find_parent('li')
@@ -311,7 +351,6 @@ class RealEstateScraper:
                             baths_text = baths_span.get_text(strip=True)
                             baths = self._parse_int(baths_text)
                 
-                # Get listing URL
                 link_el = card.select_one('a[href*="/for-sale/"], a[href*="/property/"]')
                 
                 listing_url = None
@@ -322,18 +361,6 @@ class RealEstateScraper:
                     elif href.startswith('http'):
                         listing_url = href
                 
-                # Extract property type from URL or breadcrumb
-                property_type = 'unknown'
-                if listing_url:
-                    if 'flats-apartments' in listing_url or 'flat' in listing_url:
-                        property_type = 'flat/apartment'
-                    elif 'houses' in listing_url or 'house' in listing_url:
-                        property_type = 'house'
-                    elif 'land' in listing_url:
-                        property_type = 'land'
-                    elif 'commercial' in listing_url:
-                        property_type = 'commercial'
-                
                 listing = {
                     'source_url': source_url,
                     'listing_url': listing_url,
@@ -344,77 +371,96 @@ class RealEstateScraper:
                     'bedrooms': beds,
                     'bathrooms': baths,
                     'sqft': None,
-                    'property_type': property_type,
+                    'property_type': self._extract_property_type_from_url(listing_url) if listing_url else 'unknown',
                     'listing_date': datetime.now().isoformat(),
                     'scraped_at': datetime.now().isoformat(),
                 }
                 
                 if listing['title'] or listing['price']:
                     listings.append(listing)
-                    logger.debug(f"Parsed: {listing['title'][:50] if listing['title'] else 'No title'} - ₦{listing['price']}")
                     
             except Exception as e:
                 logger.warning(f"[nigeriapropertycentre] Failed to parse card: {e}")
                 continue
         
-        logger.info(f"NigeriaPropertyCentre: Successfully parsed {len(listings)} listings")
         return listings
 
     def _parse_privateproperty(self, html: str, source_url: str) -> List[Dict]:
-        """UPDATED parser for privateproperty.ng based on actual HTML"""
+        """UPDATED parser for privateproperty.ng - handles both NGN and USD"""
         soup = BeautifulSoup(html, 'html.parser')
         listings = []
         
-        # PrivateProperty uses similar-listings-item containers
         cards = soup.select('div.similar-listings-item, div.result-listings > div')
         
         logger.info(f"Found {len(cards)} listing cards on PrivateProperty")
         
         for card in cards:
             try:
-                # Title is in h2 a within similar-listings-info
                 title_el = card.select_one('.similar-listings-info h2 a, .similar-listings-info h2')
-                
-                # Property type is in h3
                 type_el = card.select_one('.similar-listings-info h3')
-                property_type = self._text(type_el) if type_el else 'unknown'
                 
-                # Price is in .similar-listings-price h4
+                # Get price element
                 price_el = card.select_one('.similar-listings-price h4')
-                price_text = self._text(price_el)
+                price_text = self._text(price_el) if price_el else None
                 
-                # Location is in .listings-location
+                # Handle currency conversion
+                clean_price = None
+                currency = 'NGN'
+                
+                if price_text:
+                    import re
+                    # Check if price is in USD or NGN
+                    if '$' in price_text:
+                        currency = 'USD'
+                        # Extract USD amount
+                        usd_match = re.search(r'\$([\d,]+(?:\.\d+)?)', price_text)
+                        if usd_match:
+                            usd_price = float(usd_match.group(1).replace(',', ''))
+                            # Convert USD to NGN (using approximate rate, you might want to use live rate)
+                            # For now, store both or use a configurable rate
+                            clean_price = usd_price
+                            # You could also store USD separately
+                    else:
+                        # Extract NGN amount
+                        ngn_match = re.search(r'₦\s*([\d,]+(?:\.\d+)?)', price_text)
+                        if ngn_match:
+                            clean_price = float(ngn_match.group(1).replace(',', ''))
+                        else:
+                            # Try without currency symbol
+                            num_match = re.search(r'([\d,]+(?:\.\d+)?)', price_text)
+                            if num_match:
+                                clean_price = float(num_match.group(1).replace(',', ''))
+                
                 location_el = card.select_one('.listings-location')
                 
-                # Bedrooms and bathrooms from property-benefit icons
-                # Look for li elements with icons that indicate counts
-                benefit_items = card.select('.property-benefit li')
+                # Extract bedrooms from property-benefit or from text
                 beds = None
                 baths = None
                 
+                # Method 1: Look for benefit items with numbers
+                benefit_items = card.select('.property-benefit li')
+                numbers_found = []
                 for item in benefit_items:
-                    # Check for bed icon (fa-bed)
-                    if item.select_one('svg path') or item.select_one('i'):
-                        # Look for text content
-                        item_text = self._text(item)
-                        # Some items have numbers, some don't
-                        if item_text and item_text.isdigit():
-                            if beds is None:
-                                beds = int(item_text)
-                            else:
-                                baths = int(item_text)
+                    item_text = self._text(item)
+                    if item_text and item_text.isdigit():
+                        numbers_found.append(int(item_text))
                 
-                # Alternative: look for the text pattern in the price area
-                price_details = card.select_one('.similar-listings-price h4')
-                if price_details and not beds:
-                    # Sometimes bed info is in the price area
-                    parent_text = price_details.find_parent().get_text() if price_details.find_parent() else ''
-                    import re
-                    beds_match = re.search(r'(\d+)\s*bed', parent_text.lower())
+                if len(numbers_found) >= 2:
+                    beds = numbers_found[0]
+                    baths = numbers_found[1]
+                elif len(numbers_found) == 1:
+                    beds = numbers_found[0]
+                
+                # Method 2: Look for bed/bath in title or description
+                if not beds:
+                    full_text = card.get_text().lower()
+                    beds_match = re.search(r'(\d+)\s*bed', full_text)
+                    baths_match = re.search(r'(\d+)\s*bath', full_text)
                     if beds_match:
                         beds = int(beds_match.group(1))
+                    if baths_match:
+                        baths = int(baths_match.group(1))
                 
-                # Get listing URL
                 link_el = card.select_one('.similar-listings-info h2 a, a[href*="/listings/"]')
                 
                 listing_url = None
@@ -425,49 +471,34 @@ class RealEstateScraper:
                     elif href.startswith('http'):
                         listing_url = href
                 
-                # Extract agent/company name
+                # Extract agent name
                 agent_el = card.select_one('.media .media-body h5, .media-body h5')
                 agent_name = self._text(agent_el) if agent_el else None
-                
-                # Extract update date
-                date_el = card.select_one('.media-body h5, .date-added')
-                date_text = self._text(date_el) if date_el else None
-                
-                # Clean price - remove currency symbol and convert
-                clean_price = None
-                if price_text:
-                    # Remove ₦ and $ symbols, commas, and convert to float
-                    import re
-                    price_match = re.search(r'([\d,]+(?:\.\d+)?)', price_text.replace('₦', '').replace('$', ''))
-                    if price_match:
-                        clean_price = float(price_match.group(1).replace(',', ''))
                 
                 listing = {
                     'source_url': source_url,
                     'listing_url': listing_url,
                     'title': self._text(title_el),
                     'price': clean_price,
+                    'price_currency': currency,  # Add currency info
                     'location': self._text(location_el),
                     'address': self._text(location_el),
                     'bedrooms': beds,
                     'bathrooms': baths,
                     'sqft': None,
-                    'property_type': property_type.lower() if property_type else 'unknown',
+                    'property_type': self._text(type_el).lower() if type_el else 'unknown',
                     'agent_name': agent_name,
                     'listing_date': datetime.now().isoformat(),
                     'scraped_at': datetime.now().isoformat(),
                 }
                 
-                # Only add if we have meaningful data
                 if listing['title'] or listing['price']:
                     listings.append(listing)
-                    logger.debug(f"Parsed: {listing['title'][:50] if listing['title'] else 'No title'} - ₦{listing['price']}")
                     
             except Exception as e:
                 logger.warning(f"[privateproperty] Failed to parse card: {e}")
                 continue
         
-        logger.info(f"PrivateProperty: Successfully parsed {len(listings)} listings")
         return listings
 
     def _parse_generic(self, html: str, source_url: str) -> List[Dict]:
@@ -546,6 +577,57 @@ class RealEstateScraper:
             return float(digits) if digits else None
         except ValueError:
             return None
+        
+    def convert_currency(self, amount: float, from_currency: str, to_currency: str = 'NGN') -> float:
+        """Convert currency using approximate rates (or API for live rates)"""
+        if from_currency == to_currency:
+            return amount
+        
+        # Approximate exchange rates (you might want to use an API for live rates)
+        rates = {
+            'USD': 1500,  # 1 USD = 1500 NGN (approximate)
+            'EUR': 1600,
+            'GBP': 1900,
+        }
+        
+        if from_currency in rates:
+            return amount * rates[from_currency]
+        else:
+            logger.warning(f"Unknown currency: {from_currency}")
+            return amount
+    
+    def _extract_features_from_text(self, text: str) -> Dict:
+        """Extract property features from description text."""
+        features = {}
+        
+        features_list = {
+            'swimming_pool': ['pool', 'swimming pool', 'swimmingpool'],
+            'gym': ['gym', 'fitness', 'workout'],
+            'elevator': ['elevator', 'lift'],
+            'security': ['security', 'cctv', 'guarded', '24/7 security'],
+            'parking': ['parking', 'car park', 'garage'],
+            'furnished': ['furnished', 'fully furnished'],
+            'serviced': ['serviced', 'service apartment'],
+            'bq': ['bq', 'boys quarter', 'boys quarters'],
+            'backup_power': ['generator', 'inverter', 'power backup', '24/7 power'],
+            'water_supply': ['borehole', 'well', 'water treatment'],
+        }
+        
+        text_lower = text.lower()
+        
+        for feature, keywords in features_list.items():
+            for keyword in keywords:
+                if keyword in text_lower:
+                    features[feature] = True
+                    break
+        
+        # Extract numbers (parking spaces, etc.)
+        import re
+        parking_match = re.search(r'(\d+)\s+parking', text_lower)
+        if parking_match:
+            features['parking_spaces'] = int(parking_match.group(1))
+        
+        return features
 
     # ------------------------------------------------------------------
     # Persistence
@@ -578,17 +660,20 @@ class RealEstateScraper:
             raise
 
     def save_to_postgres(self, data: List[Dict]):
-        """Save parsed data to PostgreSQL."""
+        """Save parsed data to PostgreSQL with new schema fields."""
         if not data:
             logger.warning("No data to save to PostgreSQL")
             return
 
         cursor = self.pg_conn.cursor()
-
+        
+        # Updated property query with new fields
         property_query = """
             INSERT INTO properties (
                 property_id, address, city, state, zip_code,
-                property_type, bedrooms, bathrooms, living_area_sqft, created_at
+                property_type, bedrooms, bathrooms, living_area_sqft,
+                listing_url, source_url, source_site, agent_name, 
+                listing_title, scraped_at, price_range, created_at
             ) VALUES %s
             ON CONFLICT (property_id) DO UPDATE SET
                 address = EXCLUDED.address,
@@ -596,60 +681,108 @@ class RealEstateScraper:
                 bedrooms = EXCLUDED.bedrooms,
                 bathrooms = EXCLUDED.bathrooms,
                 living_area_sqft = EXCLUDED.living_area_sqft,
+                agent_name = EXCLUDED.agent_name,
+                listing_title = EXCLUDED.listing_title,
                 updated_at = CURRENT_TIMESTAMP
         """
-
+        
         property_values = []
         for item in data:
-            property_id = (
-                f"{item['source_url']}_{item.get('address') or item.get('location') or item.get('title') or ''}"
-            ).replace(' ', '_').lower()[:255]
-
+            # Generate consistent property_id
+            property_id = self._generate_property_id(item)
+            
+            # Determine price range category
+            price = item.get('price')
+            price_range = self._categorize_price(price) if price else None
+            
+            # Extract city and state from location string
+            city, state = self._extract_location_parts(item.get('location', ''))
+            
             property_values.append((
                 property_id,
                 item.get('address') or item.get('location'),
-                None,   # city  — parse from address in ETL layer
-                None,   # state
-                None,   # zip_code
+                city,
+                state,
+                None,  # zip_code
                 item.get('property_type'),
                 item.get('bedrooms'),
                 item.get('bathrooms'),
                 item.get('sqft'),
+                item.get('listing_url'),
+                item.get('source_url'),
+                self._extract_site_name(item.get('source_url', '')),
+                item.get('agent_name'),
+                item.get('title'),
+                datetime.now(),
+                price_range,
                 datetime.now(),
             ))
-
+        
         if property_values:
             execute_values(cursor, property_query, property_values)
-
+        
+        # Updated price query with currency support
         price_query = """
             INSERT INTO price_history (
-                property_id, price, listing_date, sale_date,
-                price_per_sqft, status, created_at
+                property_id, price, currency, price_usd, 
+                listing_date, price_per_sqft, status, created_at
             ) VALUES %s
             ON CONFLICT (property_id, listing_date) DO NOTHING
         """
-
+        
         price_values = []
         for item in data:
-            property_id = (
-                f"{item['source_url']}_{item.get('address') or item.get('location') or item.get('title') or ''}"
-            ).replace(' ', '_').lower()[:255]
-
+            property_id = self._generate_property_id(item)
             price = item.get('price')
+            currency = item.get('price_currency', 'NGN')
+            
+            # Convert to USD if needed
+            price_usd = None
+            if price and currency == 'NGN':
+                price_usd = price / 1500  # Approximate conversion
+            elif price and currency == 'USD':
+                price_usd = price
+                # Also convert USD to NGN for consistency
+                price = price * 1500
+                currency = 'NGN'  # Store NGN as primary
+            
             sqft = item.get('sqft')
             price_values.append((
                 property_id,
                 price,
+                currency,
+                price_usd,
                 datetime.now().date(),
-                None,
                 round(price / sqft, 2) if price and sqft else None,
                 'active',
                 datetime.now(),
             ))
-
+        
         if price_values:
             execute_values(cursor, price_query, price_values)
-
+        
+        # Insert property features if available
+        features_query = """
+            INSERT INTO property_features (property_id, feature_name, feature_value)
+            VALUES %s
+            ON CONFLICT (property_id, feature_name) DO NOTHING
+        """
+        
+        features_values = []
+        for item in data:
+            property_id = self._generate_property_id(item)
+            features = item.get('features', {})
+            for feature_name, feature_value in features.items():
+                features_values.append((
+                    property_id,
+                    feature_name,
+                    str(feature_value) if feature_value else None
+                ))
+        
+        if features_values:
+            execute_values(cursor, features_query, features_values)
+        
+        # Log scraper run
         cursor.execute("""
             INSERT INTO scraper_logs (
                 job_id, source_url, records_scraped, status,
@@ -664,10 +797,73 @@ class RealEstateScraper:
             datetime.now(),
             0,
         ))
-
+        
         self.pg_conn.commit()
         cursor.close()
         logger.info(f"Saved {len(data)} records to PostgreSQL")
+
+    def _generate_property_id(self, item: Dict) -> str:
+        """Generate consistent property ID from available data."""
+        source = item.get('source_url', 'unknown')
+        identifier = (
+            item.get('listing_url') or 
+            item.get('title') or 
+            item.get('location') or 
+            ''
+        )
+        # Create a hash-like ID
+        import hashlib
+        id_string = f"{source}_{identifier}".lower()
+        return hashlib.md5(id_string.encode()).hexdigest()[:32]
+
+    def _categorize_price(self, price: float) -> str:
+        """Categorize property price for Nigerian market."""
+        if price < 50000000:  # Less than 50M NGN
+            return 'Budget'
+        elif price < 200000000:  # 50M - 200M NGN
+            return 'Mid-Range'
+        elif price < 500000000:  # 200M - 500M NGN
+            return 'High-End'
+        else:  # 500M+ NGN
+            return 'Luxury'
+
+    def _extract_location_parts(self, location: str) -> tuple:
+        """Extract city and state from Nigerian location string."""
+        if not location:
+            return (None, None)
+        
+        # Common Nigerian states
+        states = [
+            'Lagos', 'Abuja', 'Rivers', 'Ogun', 'Oyo', 'Anambra', 'Enugu',
+            'Kano', 'Kaduna', 'Delta', 'Edo', 'Imo', 'Abia', 'Akwa Ibom',
+            'Cross River', 'Plateau', 'Benue', 'Niger', 'Kwara', 'Osun',
+            'Ondo', 'Ekiti', 'Kogi', 'Nassarawa', 'Bauchi', 'Gombe', 'Yobe',
+            'Borno', 'Adamawa', 'Taraba', 'Kebbi', 'Sokoto', 'Zamfara',
+            'Katsina', 'Jigawa', 'Bayelsa', 'Ebonyi'
+        ]
+        
+        location_parts = location.split(',')
+        city = location_parts[0].strip() if location_parts else None
+        state = None
+        
+        # Look for state in location string
+        for s in states:
+            if s.lower() in location.lower():
+                state = s
+                break
+        
+        return (city, state)
+
+    def _extract_site_name(self, url: str) -> str:
+        """Extract site name from URL."""
+        if 'propertypro.ng' in url:
+            return 'PropertyPro'
+        elif 'nigeriapropertycentre.com' in url:
+            return 'NigeriaPropertyCentre'
+        elif 'privateproperty.ng' in url:
+            return 'PrivateProperty'
+        else:
+            return 'Unknown'
 
     def cache_in_redis(self, key: str, data: List[Dict], ttl: int = 3600):
         """Cache results in Redis for fast access."""
