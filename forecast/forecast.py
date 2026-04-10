@@ -3,16 +3,14 @@ import json
 import logging
 import pandas as pd
 import numpy as np
-from prophet import Prophet
-from prophet.diagnostics import cross_validation, performance_metrics
+from statsforecast import StatsForecast
+from statsforecast.models import AutoARIMA, AutoETS
 from sqlalchemy import create_engine, text
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime, timedelta
+from datetime import datetime
 import redis
 from typing import Dict, Any, Optional
-import joblib
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 logging.basicConfig(
     level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
@@ -25,14 +23,11 @@ class RealEstateForecaster:
     def __init__(self):
         postgres_dsn = os.getenv('POSTGRES_DSN')
 
-        # SQLAlchemy engine — required for pd.read_sql() in pandas >= 2.0
-        # Ensures the DSN uses the psycopg2 dialect explicitly
         engine_url = postgres_dsn
         if engine_url.startswith('postgresql://'):
             engine_url = engine_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
         self.engine = create_engine(engine_url)
 
-        # Raw psycopg2 connection — used only for execute_values() writes
         self.pg_conn = psycopg2.connect(dsn=postgres_dsn)
 
         self.redis_client = redis.Redis(
@@ -53,18 +48,16 @@ class RealEstateForecaster:
     def fetch_historical_data(self, zip_code: Optional[str] = None) -> pd.DataFrame:
         logger.info(f"Fetching historical data for zip_code: {zip_code or 'all'}")
 
-        # Use parameterised query via SQLAlchemy to avoid SQL injection
         if zip_code:
             query = text("""
                 SELECT
                     ph.listing_date  AS ds,
-                    AVG(ph.price)    AS y,
-                    p.zip_code
+                    AVG(ph.price)    AS y
                 FROM price_history ph
                 JOIN properties p ON ph.property_id = p.property_id
                 WHERE ph.price IS NOT NULL
                   AND p.zip_code = :zip_code
-                GROUP BY ph.listing_date, p.zip_code
+                GROUP BY ph.listing_date
                 ORDER BY ph.listing_date
             """)
             params = {'zip_code': zip_code}
@@ -72,17 +65,15 @@ class RealEstateForecaster:
             query = text("""
                 SELECT
                     ph.listing_date  AS ds,
-                    AVG(ph.price)    AS y,
-                    p.zip_code
+                    AVG(ph.price)    AS y
                 FROM price_history ph
                 JOIN properties p ON ph.property_id = p.property_id
                 WHERE ph.price IS NOT NULL
-                GROUP BY ph.listing_date, p.zip_code
+                GROUP BY ph.listing_date
                 ORDER BY ph.listing_date
             """)
             params = {}
 
-        # pd.read_sql() with a SQLAlchemy engine — no more UserWarning
         with self.engine.connect() as conn:
             df = pd.read_sql(query, conn, params=params)
 
@@ -94,7 +85,7 @@ class RealEstateForecaster:
         return df
 
     # ------------------------------------------------------------------
-    # Feature engineering
+    # Preparation
     # ------------------------------------------------------------------
 
     def prepare_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -102,30 +93,19 @@ class RealEstateForecaster:
         df = df.copy()
         df['ds'] = pd.to_datetime(df['ds'])
         df = df.sort_values('ds').reset_index(drop=True)
-
-        df['y_lag_7']        = df['y'].shift(7)
-        df['y_lag_30']       = df['y'].shift(30)
-        df['y_rolling_7']    = df['y'].rolling(window=7).mean()
-        df['y_rolling_30']   = df['y'].rolling(window=30).mean()
-        df['month']          = df['ds'].dt.month
-        df['quarter']        = df['ds'].dt.quarter
-        df['day_of_week']    = df['ds'].dt.dayofweek
-        df['is_weekend']     = (df['day_of_week'] >= 5).astype(int)
-        df['is_summer']      = df['month'].isin([6, 7, 8]).astype(int)
-        df['is_winter']      = df['month'].isin([12, 1, 2]).astype(int)
-
-        df = df.dropna()
+        df = df.dropna(subset=['ds', 'y'])
+        # statsforecast requires a unique_id column
+        df['unique_id'] = 'all'
         logger.info(f"Prepared {len(df)} records with features")
         return df
 
     # ------------------------------------------------------------------
-    # Model training
+    # Training + forecasting
     # ------------------------------------------------------------------
 
-    def train_model(self, df: pd.DataFrame, zip_code: str) -> Optional[Prophet]:
+    def train_and_forecast(self, df: pd.DataFrame, zip_code: str) -> Optional[pd.DataFrame]:
         logger.info(f"Training model for zip_code: {zip_code}")
 
-        # Prophet needs at least 2 data points; cross-validation needs ~2x initial
         if len(df) < 10:
             logger.warning(
                 f"Only {len(df)} data points for zip_code={zip_code} — "
@@ -133,65 +113,54 @@ class RealEstateForecaster:
             )
             return None
 
-        model = Prophet(
-            interval_width=self.confidence_interval,
-            yearly_seasonality=True,
-            weekly_seasonality=True,
-            daily_seasonality=False,
-            changepoint_prior_scale=0.05,
-            seasonality_prior_scale=10.0,
-            holidays_prior_scale=10.0,
-            seasonality_mode='multiplicative'
-        )
-        model.add_seasonality(name='monthly',   period=30.5,  fourier_order=5)
-        model.add_seasonality(name='quarterly', period=91.25, fourier_order=3)
-        model.fit(df[['ds', 'y']])
+        freq = self._infer_frequency(df)
+        logger.info(f"Inferred frequency: {freq}")
 
-        # Cross-validation only if we have enough data
-        if len(df) >= 365 * 2:
-            logger.info("Performing cross-validation...")
-            try:
-                cv_results = cross_validation(
-                    model,
-                    initial='365 days',
-                    period='30 days',
-                    horizon='90 days'
-                )
-                metrics = performance_metrics(cv_results)
-                mape    = float(metrics['mape'].mean())
-                rmse    = float(metrics['rmse'].mean())
-                logger.info(f"CV metrics — MAPE: {mape:.2f}%  RMSE: {rmse:.2f}")
+        level = [int(self.confidence_interval * 100)]  # e.g. [95]
 
-                self.redis_client.hset(
-                    f"forecast:metrics:{zip_code}",
-                    mapping={
-                        'mape':          mape,
-                        'rmse':          rmse,
-                        'training_date': datetime.now().isoformat(),
-                        'horizon':       self.forecast_horizon,
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Cross-validation skipped: {e}")
-        else:
-            logger.info(
-                f"Skipping cross-validation — need 2+ years of data "
-                f"(have {len(df)} points)"
-            )
+        models = [
+            AutoARIMA(season_length=7),
+            AutoETS(season_length=7),
+        ]
 
-        return model
+        sf = StatsForecast(models=models, freq=freq, n_jobs=1)
 
-    # ------------------------------------------------------------------
-    # Forecasting
-    # ------------------------------------------------------------------
+        try:
+            sf.fit(df[['unique_id', 'ds', 'y']])
+            forecast = sf.predict(h=self.forecast_horizon, level=level)
+        except Exception as e:
+            logger.error(f"Model fitting failed: {e}", exc_info=True)
+            return None
 
-    def generate_forecast(self, model: Prophet, df: pd.DataFrame) -> pd.DataFrame:
-        logger.info(f"Generating {self.forecast_horizon}-day forecast")
-        future   = model.make_future_dataframe(periods=self.forecast_horizon, include_history=True)
-        forecast = model.predict(future)
-        result   = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(self.forecast_horizon)
+        # Blend the two models; fall back to yhat if CI columns are absent
+        lo_arima = f'AutoARIMA-lo-{level[0]}'
+        hi_arima = f'AutoARIMA-hi-{level[0]}'
+        lo_ets   = f'AutoETS-lo-{level[0]}'
+        hi_ets   = f'AutoETS-hi-{level[0]}'
+
+        forecast['yhat']       = (forecast['AutoARIMA'] + forecast['AutoETS']) / 2
+        forecast['yhat_lower'] = (forecast.get(lo_arima, forecast['yhat']) +
+                                  forecast.get(lo_ets,   forecast['yhat'])) / 2
+        forecast['yhat_upper'] = (forecast.get(hi_arima, forecast['yhat']) +
+                                  forecast.get(hi_ets,   forecast['yhat'])) / 2
+
+        result = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
+        result = result.reset_index(drop=True)
+
         logger.info(f"Generated {len(result)} forecast points")
         return result
+
+    @staticmethod
+    def _infer_frequency(df: pd.DataFrame) -> str:
+        if len(df) < 2:
+            return 'D'
+        deltas = df['ds'].diff().dropna().dt.days
+        median_gap = deltas.median()
+        if median_gap <= 1:
+            return 'D'
+        if median_gap <= 7:
+            return 'W'
+        return 'MS'
 
     # ------------------------------------------------------------------
     # Persistence
@@ -200,7 +169,6 @@ class RealEstateForecaster:
     def save_forecast_to_postgres(self, forecast_df: pd.DataFrame, zip_code: str):
         logger.info(f"Saving forecast for zip_code: {zip_code}")
 
-        # Ensure the dummy property row exists so the FK constraint is satisfied
         property_id = f"forecast_zip_{zip_code}"
         cursor = self.pg_conn.cursor()
 
@@ -210,9 +178,6 @@ class RealEstateForecaster:
             ON CONFLICT (property_id) DO NOTHING
         """, (property_id, f'Market forecast — zip {zip_code}', 'market_aggregate', datetime.now()))
 
-        # price_forecasts has no unique constraint on (property_id, forecast_date)
-        # in the current schema, so we use INSERT ... ON CONFLICT DO NOTHING
-        # via a manual unique index if you add one, or plain INSERT here.
         values = [
             (
                 property_id,
@@ -220,7 +185,7 @@ class RealEstateForecaster:
                 float(row['yhat']),
                 float(row['yhat_lower']),
                 float(row['yhat_upper']),
-                'prophet_v1',
+                'statsforecast_v1',
                 datetime.now(),
             )
             for _, row in forecast_df.iterrows()
@@ -232,7 +197,12 @@ class RealEstateForecaster:
                     property_id, forecast_date, predicted_price,
                     confidence_lower, confidence_upper, model_version, created_at
                 ) VALUES %s
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (property_id, forecast_date) DO UPDATE SET
+                    predicted_price  = EXCLUDED.predicted_price,
+                    confidence_lower = EXCLUDED.confidence_lower,
+                    confidence_upper = EXCLUDED.confidence_upper,
+                    model_version    = EXCLUDED.model_version,
+                    created_at       = EXCLUDED.created_at
             """, values)
             self.pg_conn.commit()
             logger.info(f"Saved {len(values)} forecast records")
@@ -278,8 +248,8 @@ class RealEstateForecaster:
         )
 
         return {
-            'current_price':      latest_price,
-            'forecasted_price':   forecast_end,
+            'current_price':       latest_price,
+            'forecasted_price':    forecast_end,
             'expected_change_pct': round(change_pct, 2) if change_pct is not None else None,
             'confidence_range': {
                 'lower': float(forecast_df['yhat_lower'].iloc[-1]),
@@ -293,10 +263,10 @@ class RealEstateForecaster:
     @staticmethod
     def generate_recommendation(forecast_price: float, current_price: float) -> str:
         change_pct = (forecast_price - current_price) / current_price * 100
-        if change_pct > 10:   return "STRONG_BUY — Expected significant appreciation"
-        if change_pct > 5:    return "BUY — Good appreciation expected"
-        if change_pct > 0:    return "HOLD — Moderate growth expected"
-        if change_pct > -5:   return "CAUTION — Slight decline expected"
+        if change_pct > 10:  return "STRONG_BUY — Expected significant appreciation"
+        if change_pct > 5:   return "BUY — Good appreciation expected"
+        if change_pct > 0:   return "HOLD — Moderate growth expected"
+        if change_pct > -5:  return "CAUTION — Slight decline expected"
         return "SELL — Significant decline expected"
 
     # ------------------------------------------------------------------
@@ -311,16 +281,15 @@ class RealEstateForecaster:
                 return None
 
             prepared_df = self.prepare_features(historical_df)
-            model       = self.train_model(prepared_df, zip_code or 'all')
+            forecast_df = self.train_and_forecast(prepared_df, zip_code or 'all')
 
-            if model is None:
-                logger.warning("Model training skipped — insufficient data")
+            if forecast_df is None:
+                logger.warning("Forecasting skipped — insufficient data")
                 return None
 
-            forecast_df = self.generate_forecast(model, prepared_df)
             self.save_forecast_to_postgres(forecast_df, zip_code or 'all')
             self.cache_forecast_in_redis(forecast_df, zip_code or 'all')
-            insights    = self.generate_insights(forecast_df, prepared_df)
+            insights = self.generate_insights(forecast_df, prepared_df)
 
             logger.info(f"Forecast complete for {zip_code or 'all'}: {insights}")
             return {
@@ -332,14 +301,13 @@ class RealEstateForecaster:
             logger.error(f"Forecast failed: {e}", exc_info=True)
             raise
         finally:
-            # Close raw psycopg2 connection; SQLAlchemy engine manages its own pool
             if not self.pg_conn.closed:
                 self.pg_conn.close()
 
 
 if __name__ == "__main__":
     forecaster = RealEstateForecaster()
-    zip_codes  = [z.strip() for z in os.getenv('FORECAST_ZIP_CODES', '').split(',') if z.strip()]
+    zip_codes = [z.strip() for z in os.getenv('FORECAST_ZIP_CODES', '').split(',') if z.strip()]
 
     if zip_codes:
         for zc in zip_codes:

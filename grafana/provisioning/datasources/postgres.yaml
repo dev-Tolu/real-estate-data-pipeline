@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  - name: RealEstateDB
+    type: postgres
+    uid: realestate-postgres
+    url: postgres:5432
+    user: grafana_reader
+    secureJsonData:
+      password: GrafanaReadOnly2026
+    jsonData:
+      database: analytics_db
+      sslmode: disable
+      maxOpenConns: 10
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1700
+      timescaledb: false
+    editable: false

@@ -1,0 +1,21 @@
+name: "realestate_dbt"
+version: "1.0.0"
+config-version: 2
+
+profile: "realestate_dbt"
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  realestate_dbt:
+    staging:
+      +schema: staging
+      +materialized: view
+    core:
+      +materialized: table
+    marts:
+      +materialized: table

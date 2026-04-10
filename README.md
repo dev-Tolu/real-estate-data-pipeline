@@ -2,7 +2,7 @@
 
 This project presents an end-to-end data engineering pipeline for real estate analytics, designed to collect, process, validate, and forecast property market trends. The system leverages Python-based web scraping to extract listing data, which is ingested into a data lake and processed using Apache Spark. Data quality is enforced through Great Expectations, while transformations are managed using dbt to produce clean, analytics-ready datasets stored in PostgreSQL.
 
-A time-series forecasting module built with Prophet generates insights into price and demand trends, with Redis providing a caching layer for efficient data access. The pipeline is orchestrated using Apache Airflow, and results are visualized through Grafana dashboards for real-time business intelligence.
+A time-series forecasting module built with Python Forecast (AutoARIMA, AutoETS) generates insights into price and demand trends, with Redis providing a caching layer for efficient data access. The pipeline is orchestrated using Apache Airflow, and results are visualized through Grafana dashboards for real-time business intelligence.
 
 This architecture demonstrates scalable, modular design principles and integrates modern data engineering tools to support reliable, reproducible, and insight-driven decision-making in the real estate domain.
 
@@ -11,7 +11,7 @@ This architecture demonstrates scalable, modular design principles and integrate
 - Web scraping using BeautifulSoup
 - Data lake storage (MinIO / S3)
 - Distributed processing with Spark
-- Time-series forecasting using Prophet
+- Time-series forecasting using Python Forecast
 - Workflow orchestration with Airflow
 - PostgreSQL serving layer for BI tools
 
@@ -20,6 +20,8 @@ This architecture demonstrates scalable, modular design principles and integrate
 ## 🏗️ Architecture
 
 ![Architecture](docs/architecture.png)
+
+[![](https://mermaid.ink/img/pako:eNqdVo1O4zgQfhUraG-LVNg0LS3NnVYqFEpX7VJI90dXTshJnNYiiXO2A3Qp734TO0nTbm51R5FIxjPzeWY83zgvhsd8YtjGkuNkhebDuxjB79075Mh1SOOllr0QCzEkAXI5i38QFNAwtA88vxe0raaQnD0Q-6DdbufvR0_UlyvbSp6bHgsZtw-CIPh9D0rQ8JHwAsrM_v4TlGma-1BLFvo5UBD4PfPNQB6LklQW-VmtfjdovzW_RxxSH0vK4iK0Tqfd7r4VzqVlhv3Tt2fIuLciYF8NrOPh4MT8H4GVTXJdRdOrA8qDkD0tBgkGXSGiP1z-4WPFnnH0G3JA8tOQ8L9s22a7WNtGZCn3iNDyN-IKKoloND7TJeEUx-iW4DCHvxASw-kVRoeHFZgz3bkTvCZcL4rU1V1_Z1w8w76ezLWG1mc_xwMLwheztVxBvXIx3-79MI3c9yh3hqizNPIW2kJMaTy-XjTUAznt3PcWP6FPzvVnBBiJOMw8Nbe0I4n9agk0VepjnzDsZ7WUeElqEkgwfygOQwl5AEMKtaYuhOqjq_l0gmaYCyB8bQ4ZOOgWjRkTcsmJczPJYYTWHMPyPcdP9yHAgqwz0hSvy-gmBXbINRrhYptKRl-3zFH6Sjqj7y8jTrCEoifEk8pIFBlhiUvg8xXxHsQrBLHlYV0go2x01Bd2znEsAsYjrUcN35WH1WCGZ_MFrKEpjNCwiCIrzVkKlSRCoAlbUq-2okMazThLxKLh0-g-gVfCJSUFypeY_p0SdMVSQXQtsxm3db_05IxToMWiEXgS_OH9fgW1Z3ydQ5yHBMdwuNquBmOKuQT_CB738O-BwINAT3hFEIMlHPVS13jPf7eIU-guSBhNCOZxeWlUSvmTQaWKl4wTDwu5ZVmxUoSRSja4HU8H6IN6v5g7tSUt3IZni4YuSJCv_Dp6h_DHuqDzddj1bLzTgxwHOMaL_Al9J1Yuw9wXisW0bg_Vm5fZIJzQ-GFvmKGjo4-bq_l8hkYX800xZLRNMXEyEwc_grGLpbdSs2OjZ4s21PMlM4OB6AsEVMdhSMKNZn2OpgZAZvSNq52DELgksRuSTUHy3FILyjbnIxEb4J9Wj74rzThAs4Hj2GjO6RLmMVgAKbRJmXtGEfiUIDCf9rCPAaJkWdUXXhT-l0QALTJNTpdd9TjO1SUddvXnOPTSUEeuur3asxN1Hlou_fVRKB5RD-6V7Nw2lRbNzUtZ2c848am6AMSm0oXVy2dc2azIRfnepHCLqcrqbqqLp95GJfQrjDKQfzGqv8WrDVpc3uqgistawGUzZTGFEom9Zt21T92IQoSfmLvTgztGt2lc6aod1cUz8VJ1dGVb1Lhuj8Jowkcs9Q07wKEgTSMiPMKZbLxk3neGXJEILhMbXv0sGqD0KzglOP6TsciwJU_BjbN0uSpB0iRr_CHFMBS2JsBtws9ZGkvDPjk9VRiG_WI8g9g7NttWv9VpdXrdU6vVahprwz7qtFvHna5pdSyr1zL7p9bJa9P4obZtHfc6ptXvmmbXMq1uvwd40E9Q3qn-NFdf6K__AKU2x3E?type=png)](https://mermaid.live/edit#pako:eNqdVo1O4zgQfhUraG-LVNg0LS3NnVYqFEpX7VJI90dXTshJnNYiiXO2A3Qp734TO0nTbm51R5FIxjPzeWY83zgvhsd8YtjGkuNkhebDuxjB79075Mh1SOOllr0QCzEkAXI5i38QFNAwtA88vxe0raaQnD0Q-6DdbufvR0_UlyvbSp6bHgsZtw-CIPh9D0rQ8JHwAsrM_v4TlGma-1BLFvo5UBD4PfPNQB6LklQW-VmtfjdovzW_RxxSH0vK4iK0Tqfd7r4VzqVlhv3Tt2fIuLciYF8NrOPh4MT8H4GVTXJdRdOrA8qDkD0tBgkGXSGiP1z-4WPFnnH0G3JA8tOQ8L9s22a7WNtGZCn3iNDyN-IKKoloND7TJeEUx-iW4DCHvxASw-kVRoeHFZgz3bkTvCZcL4rU1V1_Z1w8w76ezLWG1mc_xwMLwheztVxBvXIx3-79MI3c9yh3hqizNPIW2kJMaTy-XjTUAznt3PcWP6FPzvVnBBiJOMw8Nbe0I4n9agk0VepjnzDsZ7WUeElqEkgwfygOQwl5AEMKtaYuhOqjq_l0gmaYCyB8bQ4ZOOgWjRkTcsmJczPJYYTWHMPyPcdP9yHAgqwz0hSvy-gmBXbINRrhYptKRl-3zFH6Sjqj7y8jTrCEoifEk8pIFBlhiUvg8xXxHsQrBLHlYV0go2x01Bd2znEsAsYjrUcN35WH1WCGZ_MFrKEpjNCwiCIrzVkKlSRCoAlbUq-2okMazThLxKLh0-g-gVfCJSUFypeY_p0SdMVSQXQtsxm3db_05IxToMWiEXgS_OH9fgW1Z3ydQ5yHBMdwuNquBmOKuQT_CB738O-BwINAT3hFEIMlHPVS13jPf7eIU-guSBhNCOZxeWlUSvmTQaWKl4wTDwu5ZVmxUoSRSja4HU8H6IN6v5g7tSUt3IZni4YuSJCv_Dp6h_DHuqDzddj1bLzTgxwHOMaL_Al9J1Yuw9wXisW0bg_Vm5fZIJzQ-GFvmKGjo4-bq_l8hkYX800xZLRNMXEyEwc_grGLpbdSs2OjZ4s21PMlM4OB6AsEVMdhSMKNZn2OpgZAZvSNq52DELgksRuSTUHy3FILyjbnIxEb4J9Wj74rzThAs4Hj2GjO6RLmMVgAKbRJmXtGEfiUIDCf9rCPAaJkWdUXXhT-l0QALTJNTpdd9TjO1SUddvXnOPTSUEeuur3asxN1Hlou_fVRKB5RD-6V7Nw2lRbNzUtZ2c848am6AMSm0oXVy2dc2azIRfnepHCLqcrqbqqLp95GJfQrjDKQfzGqv8WrDVpc3uqgistawGUzZTGFEom9Zt21T92IQoSfmLvTgztGt2lc6aod1cUz8VJ1dGVb1Lhuj8Jowkcs9Q07wKEgTSMiPMKZbLxk3neGXJEILhMbXv0sGqD0KzglOP6TsciwJU_BjbN0uSpB0iRr_CHFMBS2JsBtws9ZGkvDPjk9VRiG_WI8g9g7NttWv9VpdXrdU6vVahprwz7qtFvHna5pdSyr1zL7p9bJa9P4obZtHfc6ptXvmmbXMq1uvwd40E9Q3qn-NFdf6K__AKU2x3E)
 
 ---
 
@@ -30,7 +32,7 @@ This architecture demonstrates scalable, modular design principles and integrate
 - PostgreSQL (Analytics DB)
 - MinIO (S3-compatible storage)
 - Airflow (Orchestration)
-- Prophet (Forecasting)
+- Python Forecast (Forecasting)
 
 ---
 
@@ -41,3 +43,4 @@ This architecture demonstrates scalable, modular design principles and integrate
 ```bash
 git clone https://github.com/yourusername/real-estate-data-pipeline.git
 cd real-estate-data-pipeline
+```

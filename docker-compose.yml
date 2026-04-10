@@ -29,11 +29,15 @@ x-airflow-common: &airflow-common
     AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW__API_AUTH__JWT_ISSUER:-airflow}
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     AIRFLOW_CONFIG: "/opt/airflow/config/airflow.cfg"
+    # LocalExecutor runs tasks directly in the scheduler process —
+    # no Celery broker or result backend needed
+    _PIP_ADDITIONAL_REQUIREMENTS: "dbt-postgres>=1.7.0 great-expectations pandas"
   volumes:
     - ./dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/config:/opt/airflow/config
     - ./airflow/plugins:/opt/airflow/plugins
+    - ./dbt:/opt/airflow/dbt
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
     airflow-postgres:
@@ -61,7 +65,7 @@ services:
     restart: unless-stopped
     healthcheck:
       <<: *healthcheck-defaults
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
     deploy:
       resources:
         limits:
@@ -98,15 +102,17 @@ services:
     image: realestate-spark
     container_name: realestate-spark-master
     environment:
-      SPARK_NO_DAEMONIZE: "true"
+      SPARK_MODE: master
       SPARK_MASTER_HOST: spark-master
-      SPARK_MASTER_PORT: "7077"
-      SPARK_MASTER_WEBUI_PORT: "8080"
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
     ports:
       - "8082:8080" # WebUI — avoids conflict with airflow-apiserver on 8080
       - "7077:7077" # Spark master port for worker connections
     volumes:
-      - spark-data:/opt/spark/work
+      - spark-data:/bitnami
       - ./spark:/opt/spark-apps:ro
     restart: unless-stopped
     healthcheck:
@@ -120,8 +126,12 @@ services:
       spark-master:
         condition: service_healthy
     environment:
-      SPARK_NO_DAEMONIZE: "true"
-      SPARK_WORKER_WEBUI_PORT: "8081"
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
     # No container_name - allows scaling
     deploy:
       replicas: ${SPARK_WORKER_REPLICAS:-2}
@@ -133,6 +143,7 @@ services:
 
   # ---------------------------
   # ⚡ Redis (Caching Layer)
+  # Used by scraper and forecast services — not by Airflow
   # ---------------------------
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -225,11 +236,35 @@ services:
     logging: *logging
 
   # ---------------------------
+  # 🏗️ dbt (Data Build Tool) - Dev Container
+  # ---------------------------
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-postgres:1.7.latest
+    container_name: realestate-dbt
+    command: sleep infinity
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?err}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?err}
+      POSTGRES_DB: ${POSTGRES_DB:?err}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    volumes:
+      - ./dbt:/usr/app/dbt
+    restart: unless-stopped
+    logging: *logging
+
+  # ---------------------------
   # 📊 Grafana
   # ---------------------------
   grafana:
     image: grafana/grafana:11.5.2
     container_name: realestate-grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?err}
@@ -237,6 +272,8 @@ services:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     restart: unless-stopped
     healthcheck:
       <<: *healthcheck-defaults
@@ -280,7 +317,6 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?err}
-      _PIP_ADDITIONAL_REQUIREMENTS: ""
     user: "0:0"
     restart: "no"
 
@@ -310,27 +346,6 @@ services:
     command: scheduler
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: always
-    depends_on:
-      <<: *airflow-common-depends-on
-      airflow-init:
-        condition: service_completed_successfully
-    logging: *logging
-
-  airflow-dag-processor:
-    <<: *airflow-common
-    container_name: realestate-airflow-dag-processor
-    command: dag-processor
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"',
-        ]
       interval: 30s
       timeout: 10s
       retries: 5
