@@ -6,7 +6,8 @@ RUN pip install --no-cache-dir \
     boto3 \
     pandas \
     numpy \
-    psycopg2-binary
+    psycopg2-binary \
+    beautifulsoup4
 
 COPY etl.py /opt/spark-apps/etl.py
 

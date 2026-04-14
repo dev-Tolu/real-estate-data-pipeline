@@ -2,7 +2,8 @@ import os
 import json
 import time
 import logging
-import requests
+import cloudscraper
+from redis import Redis
 from datetime import datetime
 from minio import Minio
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -22,9 +23,23 @@ class RawExtractor:
         if not self.minio_client.bucket_exists(self.bucket_raw):
             self.minio_client.make_bucket(self.bucket_raw)
 
+        self.redis_client = Redis(
+            host='redis',
+            port=6379,
+            password=os.getenv('REDIS_PASSWORD'),
+            db=0,
+            decode_responses=True
+        )
+
+
         self.source_urls = [u.strip() for u in os.getenv('DATA_SOURCE_URLS', '').split(',') if u.strip()]
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        self.session = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True
+            }
+        )
         self.rate_limit = 2
         self.last_request_time = 0
 

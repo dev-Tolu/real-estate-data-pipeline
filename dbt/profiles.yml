@@ -9,4 +9,4 @@ realestate_dbt:
       port: "{{ env_var('POSTGRES_PORT', 5432) | as_number }}"
       dbname: "{{ env_var('POSTGRES_DB') }}"
       schema: public
-      threads: 4
+      threads: 1

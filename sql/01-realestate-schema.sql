@@ -4,21 +4,30 @@
 -- Create the staging area
 CREATE SCHEMA IF NOT EXISTS staging;
 
--- Spark will write to this table
+-- Spark will write to this table.
+-- FIX: bedrooms, bathrooms, and sqft are now INTEGER (not TEXT).
+-- The ETL (etl.py) always returns int from _parse_int() and declares these
+-- as IntegerType in listing_schema. The old TEXT columns caused Spark's JDBC
+-- writer to either coerce silently or error, depending on the driver version.
+-- If you have an existing table, run:
+--   ALTER TABLE staging.stg_raw_listings
+--       ALTER COLUMN bedrooms  TYPE INTEGER USING bedrooms::integer,
+--       ALTER COLUMN bathrooms TYPE INTEGER USING bathrooms::integer,
+--       ALTER COLUMN sqft      TYPE INTEGER USING sqft::integer;
 CREATE TABLE IF NOT EXISTS staging.stg_raw_listings (
-    property_id VARCHAR(100),
-    url TEXT,
-    title TEXT,
-    price_raw TEXT,
-    currency_raw VARCHAR(10),
-    location TEXT,
-    bedrooms TEXT,
-    bathrooms TEXT,
-    sqft TEXT,
-    property_type TEXT,
-    source_site VARCHAR(100),
-    extracted_at TIMESTAMP,
-    spark_processed_at TIMESTAMP
+    property_id         VARCHAR(100),
+    url                 TEXT,
+    title               TEXT,
+    price_raw           TEXT,
+    currency_raw        VARCHAR(10),
+    location            TEXT,
+    bedrooms            INTEGER,
+    bathrooms           INTEGER,
+    sqft                INTEGER,
+    property_type       TEXT,
+    source_site         VARCHAR(100),
+    extracted_at        TIMESTAMP,
+    spark_processed_at  TIMESTAMP
 );
 
 
@@ -27,9 +36,8 @@ CREATE TABLE IF NOT EXISTS staging.stg_raw_listings (
 -- ============================================
 
 -- Enable extensions
--- NOTE: postgis and timescaledb require a custom image (e.g. timescale/timescaledb-ha or postgis/postgis).
--- If using the default postgres:15-alpine image, remove or comment out the extension lines below
--- and remove the create_hypertable() calls.
+-- NOTE: postgis and timescaledb require a custom image.
+-- If using the default postgres:15-alpine image, remove these lines.
 -- CREATE EXTENSION IF NOT EXISTS postgis;
 -- CREATE EXTENSION IF NOT EXISTS timescaledb;
 
@@ -52,16 +60,13 @@ CREATE TABLE IF NOT EXISTS properties (
     living_area_sqft  DECIMAL(10, 2),
     bedrooms          INTEGER,
     bathrooms         DECIMAL(4, 2),
-    -- Agent / seller information
     agent_name        VARCHAR(255),
     agent_phone       VARCHAR(50),
     agent_email       VARCHAR(255),
-    -- Listing metadata
     listing_title     TEXT,
     scraped_at        TIMESTAMP,
     source_site       VARCHAR(100),
     price_range       VARCHAR(50),
-    -- Feature storage
     features          JSONB,
     description       TEXT,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -84,11 +89,6 @@ CREATE TABLE IF NOT EXISTS price_history (
     UNIQUE (property_id, listing_date)
 );
 
--- NOTE: create_hypertable() is only available with TimescaleDB.
--- Using postgres:17-alpine without TimescaleDB, so this is omitted.
--- To re-enable: switch to timescale/timescaledb-ha image and uncomment:
--- SELECT create_hypertable('price_history', 'listing_date', if_not_exists => TRUE);
-
 CREATE TABLE IF NOT EXISTS market_metrics (
     id                     SERIAL PRIMARY KEY,
     metric_date            DATE NOT NULL,
@@ -107,10 +107,6 @@ CREATE TABLE IF NOT EXISTS market_metrics (
     UNIQUE (metric_date, zip_code)
 );
 
--- SELECT create_hypertable('market_metrics', 'metric_date', if_not_exists => TRUE);
-
--- UNIQUE (property_id, forecast_date) ensures ON CONFLICT upserts work correctly
--- and prevents duplicate forecast rows across pipeline re-runs.
 CREATE TABLE IF NOT EXISTS price_forecasts (
     id                SERIAL PRIMARY KEY,
     property_id       VARCHAR(100) REFERENCES properties(property_id),

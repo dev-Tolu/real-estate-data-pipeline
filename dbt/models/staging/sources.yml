@@ -1,0 +1,146 @@
+version: 2
+
+sources:
+  - name: staging
+    schema: staging
+    tables:
+      - name: stg_raw_listings
+        description: "Flattened raw real estate listings ingested by Spark ETL from MinIO."
+        columns:
+          - name: property_id
+            description: "MD5 hash of (source_site + url + title). Primary dedup key."
+            tests:
+              - not_null
+          - name: url
+            description: "Canonical URL of the listing page."
+            tests:
+              - not_null
+          - name: price_raw
+            description: "Raw price string as scraped (e.g. '₦850,000,000')."
+          - name: currency_raw
+            description: "Currency extracted by the scraper: NGN or USD."
+            tests:
+              - accepted_values:
+                  values: ['NGN', 'USD']
+                  # Allow a small fraction of nulls for listings that had no price
+                  config:
+                    severity: warn
+          - name: source_site
+            description: "Short display name of the scraping source."
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['PropertyPro', 'NigeriaPropertyCentre', 'PrivateProperty', 'Unknown']
+          - name: extracted_at
+            description: "Timestamp when the page was fetched by the scraper."
+            tests:
+              - not_null
+          - name: bedrooms
+            description: "Number of bedrooms (integer). NULL for land / commercial listings."
+          - name: bathrooms
+            description: "Number of bathrooms (integer). NULL for land / commercial listings."
+
+models:
+  - name: stg_listings
+    description: >
+      Cleaned and deduplicated listing staging view.
+      Deduplication keeps the most-recently-extracted copy per property_id.
+      Rows with no extractable numeric price are filtered out.
+    columns:
+      - name: property_id
+        description: "Stable dedup key — MD5 of (source_site + url + title)."
+        tests:
+          - not_null
+          - unique
+      - name: url
+        tests:
+          - not_null
+      - name: raw_price_numeric
+        description: "Price after stripping currency symbols and commas. Always non-null here (filtered in WHERE clause)."
+        tests:
+          - not_null
+      - name: price_ngn
+        description: "Price converted to NGN. USD rows multiplied by static 1500 rate."
+        tests:
+          - not_null
+      - name: currency_raw
+        tests:
+          - accepted_values:
+              values: ['NGN', 'USD']
+      - name: source_site
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['PropertyPro', 'NigeriaPropertyCentre', 'PrivateProperty', 'Unknown']
+      - name: property_type
+        tests:
+          - not_null
+      - name: listing_date
+        tests:
+          - not_null
+
+  - name: properties
+    description: "Mart table: one row per unique property, sourced from stg_listings."
+    columns:
+      - name: property_id
+        tests:
+          - not_null
+          - unique
+      - name: address
+        tests:
+          - not_null
+
+  - name: price_history
+    description: "Mart table: one price row per listing observation. Tracks price over time."
+    columns:
+      - name: property_id
+        tests:
+          - not_null
+      - name: price
+        tests:
+          - not_null
+      - name: currency
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['NGN', 'USD']
+      - name: listing_date
+        tests:
+          - not_null
+
+  - name: market_metrics
+    description: "Daily aggregated market metrics: average price, median price, inventory count."
+    columns:
+      - name: listing_date
+        tests:
+          - not_null
+          - unique
+      - name: average_price
+        tests:
+          - not_null
+      - name: inventory_count
+        tests:
+          - not_null
+
+  - name: dim_properties
+    description: "Core dimension: latest snapshot of each property's attributes."
+    columns:
+      - name: property_id
+        tests:
+          - not_null
+          - unique
+
+  - name: fct_price_history
+    description: "Core fact: outlier-filtered price history with price range buckets."
+    columns:
+      - name: property_id
+        tests:
+          - not_null
+      - name: price
+        tests:
+          - not_null
+      - name: price_range
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Budget', 'Mid-Range', 'High-End', 'Luxury']
