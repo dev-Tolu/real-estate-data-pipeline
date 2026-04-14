@@ -4,6 +4,7 @@ import time
 import logging
 import pandas as pd
 import great_expectations as gx
+import great_expectations.expectations as gxe
 from sqlalchemy import create_engine, text
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,57 +60,72 @@ def run_validation():
         logger.warning("Staging table is empty after polling timeout. Skipping validation.")
         return
 
-    # 4. Wrap the Pandas DataFrame in Great Expectations
-    gx_df = gx.from_pandas(df)
-
-    results = []
-
-    # --- DEFINE OUR EXPECTATIONS ---
-
+    # 4. Create Ephemeral Context & Batch (GX 1.0 Fluent API)
+    context = gx.get_context(mode="ephemeral")
+    data_source = context.data_sources.add_pandas("staging_data")
+    data_asset = data_source.add_dataframe_asset(name="raw_listings")
+    batch_definition = data_asset.add_batch_definition_whole_dataframe("my_batch")
+    
+    # 5. Define Expectations the GX 1.0 Way
+    suite = gx.ExpectationSuite(name="staging_suite")
+    
     # Rule 1: Every listing MUST have a unique ID and a URL
-    results.append(gx_df.expect_column_values_to_not_be_null("property_id"))
-    results.append(gx_df.expect_column_values_to_not_be_null("url"))
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="property_id"))
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="url"))
 
     # Rule 2: We should only be scraping from our approved sources.
-    # FIX: The ETL writes short display names ('PropertyPro', 'NigeriaPropertyCentre',
-    # 'PrivateProperty'), NOT domain names. The old set used domain strings, which
-    # caused this expectation to fail for every single row in the table.
-    results.append(gx_df.expect_column_values_to_be_in_set(
-        "source_site",
-        ["PropertyPro", "NigeriaPropertyCentre", "PrivateProperty", "Unknown"]
+    suite.add_expectation(gxe.ExpectColumnValuesToBeInSet(
+        column="source_site",
+        value_set=["PropertyPro", "NigeriaPropertyCentre", "PrivateProperty", "Unknown"]
     ))
 
     # Rule 3: Bedrooms and Bathrooms shouldn't be negative
-    results.append(gx_df.expect_column_values_to_be_between(
-        "bedrooms", min_value=0, max_value=50, mostly=0.95
+    suite.add_expectation(gxe.ExpectColumnValuesToBeBetween(
+        column="bedrooms", min_value=0, max_value=50, mostly=0.95
     ))
-    results.append(gx_df.expect_column_values_to_be_between(
-        "bathrooms", min_value=0, max_value=50, mostly=0.95
+    suite.add_expectation(gxe.ExpectColumnValuesToBeBetween(
+        column="bathrooms", min_value=0, max_value=50, mostly=0.95
     ))
 
     # Rule 4: The extracted_at timestamp must exist so dbt can order it
-    results.append(gx_df.expect_column_values_to_not_be_null("extracted_at"))
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="extracted_at"))
 
     # Rule 5: price_raw must be present for the majority of listings
-    # (some listings legitimately say "Price on Request", so we use mostly=0.7)
-    results.append(gx_df.expect_column_values_to_not_be_null("price_raw", mostly=0.7))
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="price_raw", mostly=0.7))
+
+    # ---> THE FIX: Register the suite with the context <---
+    context.suites.add(suite)
+
+    # 6. Create Validation Definition
+    validation_definition = gx.ValidationDefinition(
+        name="staging_validation",
+        data=batch_definition,
+        suite=suite
+    )
+    
+    # ---> THE FIX: Register the validation definition with the context <---
+    context.validation_definitions.add(validation_definition)
+
+    # 7. Run Validation
+    results = validation_definition.run(batch_parameters={"dataframe": df})
 
     # --- EVALUATE ---
-
-    failed_expectations = [r for r in results if not r["success"]]
+    
+    # In GX 1.0, results is an object, not a dictionary.
+    failed_expectations = [r for r in results.results if not r.success]
 
     if failed_expectations:
         logger.error(f"❌ VALIDATION FAILED: {len(failed_expectations)} expectations failed.")
         for failure in failed_expectations:
-            col = failure["expectation_config"]["kwargs"].get("column", "Unknown")
-            rule = failure["expectation_config"]["expectation_type"]
-            percent_missing = failure["result"].get("unexpected_percent", 0)
+            col = failure.expectation_config.kwargs.get("column", "Unknown")
+            rule = failure.expectation_config.type
+            percent_missing = failure.result.get("unexpected_percent", 0)
             logger.error(f" - Column '{col}' failed '{rule}'. ({percent_missing:.1f}% unexpected)")
 
         raise ValueError("Data validation failed! Pipeline halted.")
 
     else:
-        logger.info(f"✅ VALIDATION PASSED! {len(results)} expectations met on {len(df)} rows.")
+        logger.info(f"✅ VALIDATION PASSED! All expectations met on {len(df)} rows.")
 
 
 if __name__ == "__main__":
