@@ -7,21 +7,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER airflow
 RUN pip install --no-cache-dir \
-    "cloudscraper" \
+    cloudscraper \
     "dbt-postgres>=1.7.0" \
     "great-expectations>=0.18.0" \
-    "pandas" \
-    "numpy" \
-    "psycopg2-binary==2.9.9" \
-    "sqlalchemy==2.0.23" \
-    "minio==7.2.0" \
-    "redis==5.0.1" \
-    "beautifulsoup4==4.12.2" \
+    pandas \
+    numpy \
+    psycopg2-binary \
+    sqlalchemy \
+    minio==7.2.0 \
+    redis \
+    beautifulsoup4 \
     "tenacity>=8.3.0" \
-    "protobuf>=3.19,<5.0" \
-    "statsforecast==1.7.5" \
-    "statsmodels" \
-    "scikit-learn" \
-    "joblib==1.3.2" \
-    "plotly==5.15.0"\
-    "lxml==4.9.3"
+    "protobuf>=3.19,<6.33.6" \
+    statsforecast==1.7.5 \
+    statsmodels \
+    scikit-learn \
+    joblib==1.5.3 \
+    plotly==5.15.0

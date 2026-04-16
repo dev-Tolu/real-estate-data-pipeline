@@ -40,6 +40,7 @@ def run_validation():
 
     # 2. Wait for Spark to finish writing (see comment above)
     if not wait_for_data(engine):
+        logger.error("Timed out waiting for staging.stg_raw_listings to be populated.")
         sys.exit(1)
 
     # 3. Load the newly flattened staging data

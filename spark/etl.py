@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Bronze → Silver ETL for the Real Estate Data Pipeline.
 
