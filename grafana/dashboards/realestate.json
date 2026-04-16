@@ -1,0 +1,340 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Listings Scraped",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM properties;",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Avg Listing Price (₦)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currency:₦",
+          "decimals": 0,
+          "custom": {}
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT AVG(price) AS value FROM price_history WHERE listing_date >= CURRENT_DATE - INTERVAL '30 days';",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Listings by Property Type",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "options": {
+        "pieType": "donut",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT property_type AS metric, COUNT(*) AS value FROM properties GROUP BY property_type ORDER BY value DESC;",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Scraper Jobs (Last 7 Days)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS value FROM scraper_logs WHERE started_at >= NOW() - INTERVAL '7 days' AND status = 'success';",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Records Scraped (Last 7 Days)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(SUM(records_scraped), 0) AS value FROM scraper_logs WHERE started_at >= NOW() - INTERVAL '7 days';",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Average Price Over Time (₦)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currency:₦",
+          "decimals": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT listing_date AS time, percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS \"Avg Price\" FROM price_history WHERE $__timeFilter(listing_date) GROUP BY listing_date ORDER BY listing_date;",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Price Distribution by Bedrooms",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT COALESCE(bedrooms::text, 'N/A') AS bedrooms, AVG(ph.price) AS avg_price FROM properties p JOIN price_history ph ON p.property_id = ph.property_id WHERE p.bedrooms IS NOT NULL GROUP BY p.bedrooms ORDER BY p.bedrooms;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg_price"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currency: ₦"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "title": "90-Day Price Forecast",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2
+          },
+          "decimals": 0
+        }
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT forecast_date AS time, predicted_price AS \"Forecast\", confidence_lower AS \"Lower Bound\", confidence_upper AS \"Upper Bound\" FROM price_forecasts WHERE property_id = 'forecast_zip_all' ORDER BY forecast_date;",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Recent Scraper Activity",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "realestate-postgres"
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Started",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT started_at AS \"Started\", records_scraped AS \"Records\", status AS \"Status\", duration_seconds AS \"Duration (s)\" FROM scraper_logs ORDER BY started_at DESC LIMIT 20;",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 38,
+  "tags": [
+    "realestate"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Real Estate Pipeline",
+  "uid": "realestate-main",
+  "version": 1
+}

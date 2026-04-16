@@ -40,7 +40,6 @@ logs/
 # Data files
 *.parquet
 *.csv
-*.json
 data/
 
 # Secrets

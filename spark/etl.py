@@ -1,28 +1,9 @@
 """
 Bronze → Silver ETL for the Real Estate Data Pipeline.
 
-Key fixes vs. the previous version
------------------------------------
-1. raw_schema   — passed to spark.read.schema() so Spark does not infer
-                  types from JSON (which could silently cast html to null
-                  on large payloads or mixed-type fields).
-
-2. listing_schema — includes currency_raw, sqft, property_type that were
-                    previously absent, causing those columns to be dropped.
-
-3. _parse_int   — returns int, not str, matching IntegerType() in the schema.
-
-4. appArgs fix  — the empty-string sentinel ("") in the REST submission
-                  payload was needed because PythonRunner was receiving the
-                  script path as the first element of appArgs and crashing
-                  when appArgs was empty.  The correct REST payload puts the
-                  script path in appResource only and uses appArgs: [].
-                  That change is made in pipeline_dag.py; etl.py itself does
-                  not need __main__ guard changes.
-
-5. Selector de-duplication — PropertyPro and NigeriaPropertyCentre selectors
-                              previously matched both wrapper and child divs,
-                              doubling every listing count.
+This script reads raw HTML pages from MinIO (Bronze), parses them to extract
+structured listing data, and writes the cleaned records to a PostgreSQL staging
+table (Silver) for further processing.
 """
 import os
 import hashlib

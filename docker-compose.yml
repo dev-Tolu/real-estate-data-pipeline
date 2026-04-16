@@ -221,6 +221,7 @@ services:
   grafana:
     image: grafana/grafana:11.5.2
     container_name: realestate-grafana
+    user: "${UID:-1000}:${GID:-1000}"
     depends_on:
       postgres:
         condition: service_healthy

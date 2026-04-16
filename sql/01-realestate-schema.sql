@@ -5,15 +5,6 @@
 CREATE SCHEMA IF NOT EXISTS staging;
 
 -- Spark will write to this table.
--- FIX: bedrooms, bathrooms, and sqft are now INTEGER (not TEXT).
--- The ETL (etl.py) always returns int from _parse_int() and declares these
--- as IntegerType in listing_schema. The old TEXT columns caused Spark's JDBC
--- writer to either coerce silently or error, depending on the driver version.
--- If you have an existing table, run:
---   ALTER TABLE staging.stg_raw_listings
---       ALTER COLUMN bedrooms  TYPE INTEGER USING bedrooms::integer,
---       ALTER COLUMN bathrooms TYPE INTEGER USING bathrooms::integer,
---       ALTER COLUMN sqft      TYPE INTEGER USING sqft::integer;
 CREATE TABLE IF NOT EXISTS staging.stg_raw_listings (
     property_id         VARCHAR(100),
     url                 TEXT,
@@ -36,10 +27,6 @@ CREATE TABLE IF NOT EXISTS staging.stg_raw_listings (
 -- ============================================
 
 -- Enable extensions
--- NOTE: postgis and timescaledb require a custom image.
--- If using the default postgres:15-alpine image, remove these lines.
--- CREATE EXTENSION IF NOT EXISTS postgis;
--- CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- ============================================
 -- CORE TABLES

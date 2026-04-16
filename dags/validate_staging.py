@@ -12,15 +12,8 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # POLLING HELPER
-# ---------------------------------------------------------------------------
-# FIX: spark_flatten_staging submits the Spark job via the REST API and returns
-# immediately (fire-and-forget). GX was therefore querying stg_raw_listings
-# before Spark had written anything, producing "Staging table is empty" on
-# every run and silently skipping all validation.
-#
-# We now poll until at least one row appears (or we time out). A 5-minute
-# window with 15-second sleeps is generous; the ETL job usually finishes in
-# 60-120 seconds on a small dataset.
+# --------------------------------------------------------------------------
+# We poll until at least one row appears (or we time out).
 # ---------------------------------------------------------------------------
 def wait_for_data(engine, timeout_seconds=300, poll_interval=15):
     deadline = time.time() + timeout_seconds

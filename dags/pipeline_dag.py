@@ -59,59 +59,11 @@ def run_scraper(**context):
 def submit_spark_and_wait(**context):
     """
     Submit the ETL job to the Spark Standalone REST API and block until done.
+    This function handles the entire lifecycle of the Spark job:
+    1. Submits the job via REST API with all necessary configs and environment variables.
+    2. Polls the job status every 15 seconds until it reaches a terminal state (FINISHED, FAILED, KILLED, ERROR, UNKNOWN).
+    3. Logs the progress and final outcome, including where to find logs on failure.
 
-    Why "User application exited with 1" with no Python traceback
-    -------------------------------------------------------------
-    When PythonRunner launches the driver script, Python's stdout+stderr go to
-    the driver's stderr file in /opt/bitnami/spark/work/driver-*/stderr.
-    If Python crashes at *import time* (e.g. "No module named pyspark"), the
-    error IS written there — but only if the right Python interpreter is used.
-
-    If PYSPARK_PYTHON resolves to a system python3 that has no pyspark package,
-    the import fails instantly and the JVM sees exit code 1 with no output in
-    the stderr file (because the wrong Python wrote it elsewhere, or the path
-    didn't even resolve).
-
-    The Bitnami Spark image ships its own Python at /opt/bitnami/python/bin/python3
-    with pyspark pre-installed.  spark-env.sh sets PYSPARK_PYTHON to that path,
-    but spark-env.sh is only sourced by the Bitnami entrypoint at container start.
-    In cluster (REST) deploy mode, the DriverRunner on the worker spawns the driver
-    subprocess via ProcessBuilder, which inherits the worker JVM's environment.
-    The JVM's environment does include what was set at container start via
-    spark-env.sh — so in theory PYSPARK_PYTHON is inherited.
-
-    In practice, if the image was built WITH `apt-get install python3` (the old
-    Dockerfile), /usr/bin/python3 appears on PATH before /opt/bitnami/python/bin,
-    and bare "python3" resolves to the wrong one.  With the Dockerfile fixed
-    (no apt Python), this ambiguity is gone — but we also set PYSPARK_PYTHON
-    explicitly in the REST payload as belt-and-suspenders, so the correct
-    interpreter is guaranteed regardless of PATH order.
-
-    appArgs: [] — why not ["file:/opt/spark-apps/etl.py", ""]
-    ----------------------------------------------------------
-    In cluster REST mode, DriverWrapper receives:
-        [workerUrl, scriptLocalPath, mainClass, *classArgs]
-    For PythonRunner as mainClass, classArgs = [appResource] + appArgs.
-    PythonRunner uses classArgs[0] as the script to execute, and classArgs[1:]
-    become sys.argv[1:] inside the Python process.
-
-    The old payload had appArgs: ["file:/opt/spark-apps/etl.py", ""], so
-    classArgs became ["file:/opt/spark-apps/etl.py", "file:/opt/spark-apps/etl.py", ""]
-    and sys.argv[1] = "file:/opt/spark-apps/etl.py" (harmless but noisy),
-    sys.argv[2] = "" (empty string, also harmless but confusing in logs).
-
-    The worker log shows the full launch command — if you still see the script
-    path and "" at the end, Airflow is running the old cached .pyc bytecode.
-    Fix: docker compose restart airflow-scheduler airflow-dag-processor
-         OR: rm dags/__pycache__/pipeline_dag.cpython-*.pyc
-
-    Image rebuild requirement
-    -------------------------
-    After changing spark/Dockerfile or spark/etl.py, you MUST rebuild:
-        docker compose build spark-master
-        docker compose up -d --no-deps spark-master spark-worker
-    Workers use the same `realestate-spark` image as the master.
-    `docker compose up -d` alone does NOT rebuild images.
     """
     import os, time, requests
 
