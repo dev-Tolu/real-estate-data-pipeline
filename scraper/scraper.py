@@ -53,9 +53,30 @@ class RawExtractor:
         response.raise_for_status()
         self.last_request_time = time.time()
         return response.text
+    
+    def log_to_db(self, source_url, records_scraped, status, error_message, started_at, completed_at):
+        try:
+            import psycopg2
+            conn = psycopg2.connect(dsn=os.getenv('POSTGRES_DSN'))
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO scraper_logs
+                (source_url, records_scraped, status, error_message, started_at, completed_at, duration_seconds)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                source_url, records_scraped, status, error_message,
+                started_at, completed_at,
+                int((completed_at - started_at).total_seconds())
+            ))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to log to DB: {e}")
 
     def extract_and_dump(self, base_url: str):
         job_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        started_at = datetime.now()
         raw_pages = []
 
         # Simple pagination loop (1 to 5)
@@ -87,6 +108,16 @@ class RawExtractor:
                 content_type='application/json'
             )
             logger.info(f"Dumped {len(raw_pages)} raw pages to MinIO: {filename}")
+
+            completed_at = datetime.now()
+            self.log_to_db(
+                source_url=base_url,
+                records_scraped=len(raw_pages),
+                status='success' if raw_pages else 'no_data',
+                error_message=None,
+                started_at=started_at,
+                completed_at=completed_at,
+            )
 
     def run(self):
         for url in self.source_urls:
