@@ -119,8 +119,8 @@ class RealEstateForecaster:
         level = [int(self.confidence_interval * 100)]  # e.g. [95]
 
         models = [
-            AutoARIMA(season_length=7),
-            AutoETS(season_length=7),
+            AutoARIMA(season_length=1),
+            # AutoETS(season_length=7),
         ]
 
         sf = StatsForecast(models=models, freq=freq, n_jobs=1)
@@ -133,16 +133,25 @@ class RealEstateForecaster:
             return None
 
         # Blend the two models; fall back to yhat if CI columns are absent
-        lo_arima = f'AutoARIMA-lo-{level[0]}'
-        hi_arima = f'AutoARIMA-hi-{level[0]}'
-        lo_ets   = f'AutoETS-lo-{level[0]}'
-        hi_ets   = f'AutoETS-hi-{level[0]}'
+        # lo_arima = f'AutoARIMA-lo-{level[0]}'
+        # hi_arima = f'AutoARIMA-hi-{level[0]}'
+        # lo_ets   = f'AutoETS-lo-{level[0]}'
+        # hi_ets   = f'AutoETS-hi-{level[0]}'
 
-        forecast['yhat']       = (forecast['AutoARIMA'] + forecast['AutoETS']) / 2
-        forecast['yhat_lower'] = (forecast.get(lo_arima, forecast['yhat']) +
-                                  forecast.get(lo_ets,   forecast['yhat'])) / 2
-        forecast['yhat_upper'] = (forecast.get(hi_arima, forecast['yhat']) +
-                                  forecast.get(hi_ets,   forecast['yhat'])) / 2
+        # forecast['yhat']       = (forecast['AutoARIMA'] + forecast['AutoETS']) / 2
+        # forecast['yhat_lower'] = (forecast.get(lo_arima, forecast['yhat']) +
+        #                           forecast.get(lo_ets,   forecast['yhat'])) / 2
+        # forecast['yhat_upper'] = (forecast.get(hi_arima, forecast['yhat']) +
+        #                           forecast.get(hi_ets,   forecast['yhat'])) / 2
+
+        # For simplicity and to test prediction, currently using AutoARIMA's point forecasts and intervals only. 
+        # Can expand to blending when we have more confidence in the models and more data.
+        # TODO: Implement model blending     
+        forecast['yhat']       = forecast['AutoARIMA']
+        lo_col = f'AutoARIMA-lo-{level[0]}'
+        hi_col = f'AutoARIMA-hi-{level[0]}'
+        forecast['yhat_lower'] = forecast.get(lo_col, forecast['yhat'])
+        forecast['yhat_upper'] = forecast.get(hi_col, forecast['yhat'])
 
         result = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
         result = result.reset_index(drop=True)
