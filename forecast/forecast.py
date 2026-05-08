@@ -106,7 +106,7 @@ class RealEstateForecaster:
     def train_and_forecast(self, df: pd.DataFrame, zip_code: str) -> Optional[pd.DataFrame]:
         logger.info(f"Training model for zip_code: {zip_code}")
 
-        if len(df) < 10:
+        if len(df) < 2: # minimum number of days for forecast: change from 2 to 10 for production
             logger.warning(
                 f"Only {len(df)} data points for zip_code={zip_code} — "
                 f"need at least 10 to train. Skipping."
@@ -152,7 +152,7 @@ class RealEstateForecaster:
 
     @staticmethod
     def _infer_frequency(df: pd.DataFrame) -> str:
-        if len(df) < 2:
+        if len(df) < 2: # minimum number of days for forecast: change from 2 to 10 for production
             return 'D'
         deltas = df['ds'].diff().dropna().dt.days
         median_gap = deltas.median()
